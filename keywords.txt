@@ -1,0 +1,36 @@
+#######################################
+# Syntax Coloring Map for EEncoder
+#######################################
+
+#######################################
+# Datatypes (KEYWORD1)
+#######################################
+
+EEncoder	KEYWORD1
+EncoderCallback	KEYWORD1
+ButtonCallback	KEYWORD1
+
+#######################################
+# Methods (KEYWORD2)
+#######################################
+
+update	KEYWORD2
+setEncoderHandler	KEYWORD2
+setButtonHandler	KEYWORD2
+setLongPressHandler	KEYWORD2
+getIncrement	KEYWORD2
+setDebounceInterval	KEYWORD2
+setLongPressDuration	KEYWORD2
+setAcceleration	KEYWORD2
+setAccelerationRate	KEYWORD2
+enable	KEYWORD2
+isEnabled	KEYWORD2
+
+#######################################
+# Constants (LITERAL1)
+#######################################
+
+DEFAULT_DEBOUNCE_MS	LITERAL1
+DEFAULT_LONG_PRESS_MS	LITERAL1
+ACCELERATION_THRESHOLD_MS	LITERAL1
+DEFAULT_ACCELERATION_RATE	LITERAL1
