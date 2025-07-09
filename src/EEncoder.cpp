@@ -1,12 +1,14 @@
 /*
   EEncoder - A clean rotary encoder library for RP2040
   Implementation file
+  
+  v1.2.0 - Robust state machine for reliable detent detection
 */
 
 #include "EEncoder.h"
 
 // Constructor with button
-EEncoder::EEncoder(uint8_t pinA, uint8_t pinB, uint8_t buttonPin) :
+EEncoder::EEncoder(uint8_t pinA, uint8_t pinB, uint8_t buttonPin, uint8_t countsPerDetent) :
     _pinA(pinA),
     _pinB(pinB),
     _buttonPin(buttonPin),
@@ -14,13 +16,15 @@ EEncoder::EEncoder(uint8_t pinA, uint8_t pinB, uint8_t buttonPin) :
     _lastEncoderState(0),
     _encoderState(0),
     _increment(0),
+    _position(0),
+    _lastStateChangeTime(0),
+    _countsPerDetent(countsPerDetent),
     _buttonState(HIGH),
     _lastButtonState(HIGH),
     _buttonStateChangeTime(0),
     _buttonPressTime(0),
     _longPressHandled(false),
     _debounceInterval(DEFAULT_DEBOUNCE_MS),
-    _lastEncoderTime(0),
     _longPressDuration(DEFAULT_LONG_PRESS_MS),
     _accelerationEnabled(false),
     _accelerationRate(DEFAULT_ACCELERATION_RATE),
@@ -37,10 +41,11 @@ EEncoder::EEncoder(uint8_t pinA, uint8_t pinB, uint8_t buttonPin) :
     
     // Read initial encoder state
     _lastEncoderState = getEncoderState();
+    _lastStateChangeTime = millis();
 }
 
 // Constructor without button
-EEncoder::EEncoder(uint8_t pinA, uint8_t pinB) :
+EEncoder::EEncoder(uint8_t pinA, uint8_t pinB, uint8_t countsPerDetent) :
     _pinA(pinA),
     _pinB(pinB),
     _buttonPin(0),
@@ -48,13 +53,15 @@ EEncoder::EEncoder(uint8_t pinA, uint8_t pinB) :
     _lastEncoderState(0),
     _encoderState(0),
     _increment(0),
+    _position(0),
+    _lastStateChangeTime(0),
+    _countsPerDetent(countsPerDetent),
     _buttonState(HIGH),
     _lastButtonState(HIGH),
     _buttonStateChangeTime(0),
     _buttonPressTime(0),
     _longPressHandled(false),
     _debounceInterval(DEFAULT_DEBOUNCE_MS),
-    _lastEncoderTime(0),
     _longPressDuration(DEFAULT_LONG_PRESS_MS),
     _accelerationEnabled(false),
     _accelerationRate(DEFAULT_ACCELERATION_RATE),
@@ -70,6 +77,7 @@ EEncoder::EEncoder(uint8_t pinA, uint8_t pinB) :
     
     // Read initial encoder state
     _lastEncoderState = getEncoderState();
+    _lastStateChangeTime = millis();
 }
 
 // Main update function - must be called frequently in loop()
@@ -96,59 +104,66 @@ void EEncoder::readEncoder() {
     if (_encoderState != _lastEncoderState) {
         uint32_t currentTime = millis();
         
-        // Simple debouncing - ignore changes too close together
-        if ((currentTime - _lastEncoderTime) >= _debounceInterval) {
-            // State machine for single count per detent
-            // Using a simplified state table for common encoder types
-            // This gives us one count per detent in most cases
+        // Create a 4-bit value from old and new states
+        uint8_t combined = (_lastEncoderState << 2) | _encoderState;
+        
+        // Determine direction based on state transition
+        int8_t direction = 0;
+        
+        // Valid CW transitions
+        if (combined == 0b0001 || combined == 0b0111 || 
+            combined == 0b1110 || combined == 0b1000) {
+            direction = 1;
+        }
+        // Valid CCW transitions  
+        else if (combined == 0b0010 || combined == 0b1011 || 
+                 combined == 0b1101 || combined == 0b0100) {
+            direction = -1;
+        }
+        
+        // Update position if valid transition
+        if (direction != 0) {
+            _position += direction;
+            _lastStateChangeTime = currentTime;
             
-            // Create a 4-bit value from old and new states
-            uint8_t combined = (_lastEncoderState << 2) | _encoderState;
-            
-            // Determine direction based on state transition
-            // These magic numbers represent the valid CW and CCW transitions
-            // for a typical mechanical encoder with one count per detent
-            switch (combined) {
-                case 0b0001: // 00 -> 01
-                case 0b0111: // 01 -> 11
-                case 0b1110: // 11 -> 10
-                case 0b1000: // 10 -> 00
-                    _increment = 1;  // Clockwise
-                    break;
-                    
-                case 0b0010: // 00 -> 10
-                case 0b1011: // 10 -> 11
-                case 0b1101: // 11 -> 01
-                case 0b0100: // 01 -> 00
-                    _increment = -1; // Counter-clockwise
-                    break;
-                    
-                default:
-                    _increment = 0;  // Invalid transition
-                    break;
-            }
-            
-            // Apply acceleration if enabled
-            if (_increment != 0 && _accelerationEnabled) {
-                uint32_t timeSinceLastRotation = currentTime - _lastRotationTime;
+            // Check if we've completed a detent
+            if (abs(_position) >= _countsPerDetent) {
+                // We've moved one full detent
+                _increment = (_position > 0) ? 1 : -1;
                 
-                // If rotating quickly, multiply increment
-                if (timeSinceLastRotation < ACCELERATION_THRESHOLD_MS) {
-                    _increment *= _accelerationRate;
+                // Reset position for next detent
+                _position = 0;
+                
+                // Apply acceleration if enabled
+                if (_accelerationEnabled) {
+                    uint32_t timeSinceLastRotation = currentTime - _lastRotationTime;
+                    
+                    // If rotating quickly, multiply increment
+                    if (timeSinceLastRotation < ACCELERATION_THRESHOLD_MS) {
+                        _increment *= _accelerationRate;
+                    }
+                    
+                    _lastRotationTime = currentTime;
                 }
                 
-                _lastRotationTime = currentTime;
+                // Fire callback
+                if (_encoderCallback != nullptr) {
+                    _encoderCallback(*this);
+                }
             }
-            
-            // Fire callback if we have a valid increment
-            if (_increment != 0 && _encoderCallback != nullptr) {
-                _encoderCallback(*this);
-            }
-            
-            _lastEncoderTime = currentTime;
         }
         
         _lastEncoderState = _encoderState;
+    }
+    // Check for idle timeout to resynchronize
+    else if (_position != 0) {
+        uint32_t currentTime = millis();
+        
+        // If encoder has been idle, reset position
+        // This prevents drift from missed counts
+        if ((currentTime - _lastStateChangeTime) > ENCODER_IDLE_TIMEOUT_MS) {
+            _position = 0;
+        }
     }
 }
 
@@ -211,7 +226,7 @@ void EEncoder::setLongPressHandler(ButtonCallback callback) {
     _longPressCallback = callback;
 }
 
-// Set debounce interval in milliseconds
+// Set debounce interval in milliseconds (applies to button only)
 void EEncoder::setDebounceInterval(uint16_t intervalMs) {
     _debounceInterval = intervalMs;
 }
@@ -235,8 +250,9 @@ void EEncoder::setAccelerationRate(uint8_t rate) {
 void EEncoder::enable(bool enabled) {
     _enabled = enabled;
     
-    // Reset increment when disabled
+    // Reset state when disabled
     if (!_enabled) {
         _increment = 0;
+        _position = 0;
     }
 }

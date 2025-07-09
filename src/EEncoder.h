@@ -2,10 +2,15 @@
   EEncoder - A clean rotary encoder library for RP2040
   Optimized for digital synthesizer UI controls
   
-  Features:
+  v1.2.0 Features:
+  - Robust state machine (no missed/false detents)
+  - Hardware normalization (handles 1, 2, or 4 counts per detent)
   - Callback-based event handling
-  - Built-in debouncing
-  - Single count per detent
+  - No encoder debouncing (uses quadrature decoding)
+  - Normalized output (always ±1 per physical detent)
+  - Long press detection
+  - Acceleration support
+  - Idle resynchronization
   - Simple, clean API
 */
 
@@ -14,11 +19,17 @@
 
 #include <Arduino.h>
 
-// Default debounce time in milliseconds (same as Bounce2)
+// Default debounce time in milliseconds for button (same as Bounce2)
 #define DEFAULT_DEBOUNCE_MS 10
 
 // Default long press duration in milliseconds
 #define DEFAULT_LONG_PRESS_MS 500
+
+// Idle timeout for position reset - prevents drift from missed counts
+#define ENCODER_IDLE_TIMEOUT_MS 100
+
+// Default counts per detent - most common encoders produce 4 counts per physical click
+#define DEFAULT_COUNTS_PER_DETENT 4
 
 // Default acceleration threshold - turns faster than this trigger acceleration
 #define ACCELERATION_THRESHOLD_MS 100
@@ -36,10 +47,10 @@ typedef void (*ButtonCallback)(EEncoder& encoder);
 class EEncoder {
 public:
     // Constructor for encoder with button
-    EEncoder(uint8_t pinA, uint8_t pinB, uint8_t buttonPin);
+    EEncoder(uint8_t pinA, uint8_t pinB, uint8_t buttonPin, uint8_t countsPerDetent = DEFAULT_COUNTS_PER_DETENT);
     
     // Constructor for encoder without button
-    EEncoder(uint8_t pinA, uint8_t pinB);
+    EEncoder(uint8_t pinA, uint8_t pinB, uint8_t countsPerDetent = DEFAULT_COUNTS_PER_DETENT);
     
     // Must be called in loop() as often as possible
     void update();
@@ -50,11 +61,12 @@ public:
     void setLongPressHandler(ButtonCallback callback);
     
     // Get the increment value since last callback
-    // Returns base increment multiplied by acceleration factor
+    // Returns ±1 per physical detent (normalized from hardware counts)
+    // With acceleration enabled, returns ±accelerationRate when turning fast
     int8_t getIncrement() const { return _increment; }
     
     // Configuration methods
-    void setDebounceInterval(uint16_t intervalMs);
+    void setDebounceInterval(uint16_t intervalMs);  // Button only - encoder doesn't need debouncing
     void setLongPressDuration(uint16_t durationMs);
     void setAcceleration(bool enabled);
     void setAccelerationRate(uint8_t rate);
@@ -75,6 +87,11 @@ private:
     uint8_t _encoderState;
     int8_t _increment;
     
+    // State machine for robust detent detection
+    int8_t _position;                // Current position in the state sequence
+    uint32_t _lastStateChangeTime;   // For idle reset
+    uint8_t _countsPerDetent;        // Hardware counts per physical detent
+    
     // State tracking for button
     bool _buttonState;
     bool _lastButtonState;
@@ -84,7 +101,6 @@ private:
     
     // Debouncing
     uint16_t _debounceInterval;
-    uint32_t _lastEncoderTime;
     
     // Long press
     uint16_t _longPressDuration;

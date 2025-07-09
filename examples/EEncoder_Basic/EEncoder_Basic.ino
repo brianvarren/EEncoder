@@ -17,15 +17,17 @@
   - Shows acceleration when turning quickly
 */
 
-#include "EEncoder.h"
+#include <EEncoder.h>
 
 // Pin definitions
-const uint8_t ENCODER_PIN_A = 4;
-const uint8_t ENCODER_PIN_B = 5;
-const uint8_t ENCODER_BUTTON = 3;
+const uint8_t ENCODER_PIN_A = 2;
+const uint8_t ENCODER_PIN_B = 3;
+const uint8_t ENCODER_BUTTON = 4;
 
 // Create encoder instance
-EEncoder encoder(ENCODER_PIN_A, ENCODER_PIN_B, ENCODER_BUTTON);
+// The last parameter (4) indicates this encoder produces 4 counts per physical detent
+// Adjust this value based on your specific encoder hardware
+EEncoder encoder(ENCODER_PIN_A, ENCODER_PIN_B, ENCODER_BUTTON, 4);
 
 // Variable to track the current value
 int currentValue = 0;
@@ -33,14 +35,14 @@ bool fineTuneMode = false;
 
 // Encoder rotation callback
 void onEncoderRotate(EEncoder& enc) {
-    // Get the direction of rotation
+    // Get the increment - always ±1 per physical detent (normalized)
     int8_t increment = enc.getIncrement();
     
     // In fine-tune mode, ignore acceleration
     if (fineTuneMode) {
-        currentValue += (increment > 0) ? 1 : -1;
+        currentValue += increment;  // 1 per click
     } else {
-        // Normal mode - use the increment (may be accelerated)
+        // Normal mode - use the increment (may be accelerated to ±5)
         currentValue += increment;
     }
     
