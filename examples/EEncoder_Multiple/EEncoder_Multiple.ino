@@ -31,9 +31,10 @@ const uint8_t ENC3_PIN_B = 9;
 const uint8_t ENC3_BUTTON = 10;
 
 // Create encoder instances
-EEncoder encFreq(ENC1_PIN_A, ENC1_PIN_B, ENC1_BUTTON);
-EEncoder encFilter(ENC2_PIN_A, ENC2_PIN_B, ENC2_BUTTON);
-EEncoder encVolume(ENC3_PIN_A, ENC3_PIN_B, ENC3_BUTTON);
+// All encoders use 4 counts per detent (typical for most encoders)
+EEncoder encFreq(ENC1_PIN_A, ENC1_PIN_B, ENC1_BUTTON, 4);
+EEncoder encFilter(ENC2_PIN_A, ENC2_PIN_B, ENC2_BUTTON, 4);
+EEncoder encVolume(ENC3_PIN_A, ENC3_PIN_B, ENC3_BUTTON, 4);
 
 // Synthesizer parameters
 struct SynthParams {
@@ -48,13 +49,13 @@ struct SynthParams {
 
 // Frequency encoder callback
 void onFreqChange(EEncoder& enc) {
-    int8_t increment = enc.getIncrement();
+    int8_t increment = enc.getIncrement();  // Always ±1 per detent (or more with acceleration)
     
     if (synth.freqFineTune) {
-        // Fine tune: 1Hz steps regardless of acceleration
-        synth.frequency += (increment > 0) ? 1 : -1;
+        // Fine tune: 1Hz steps
+        synth.frequency += increment;
     } else {
-        // Normal: 10Hz base step, can accelerate up to 50Hz
+        // Normal: 10Hz per click (×10), can accelerate up to 50Hz (×50)
         synth.frequency += increment * 10;
     }
     
@@ -71,13 +72,13 @@ void onFreqChange(EEncoder& enc) {
 
 // Filter encoder callback
 void onFilterChange(EEncoder& enc) {
-    int8_t increment = enc.getIncrement();
+    int8_t increment = enc.getIncrement();  // Always ±1 per detent (or more with acceleration)
     
     if (synth.filterFineTune) {
         // Fine tune: 10Hz steps
-        synth.filterCutoff += (increment > 0) ? 10 : -10;
+        synth.filterCutoff += increment * 10;
     } else {
-        // Normal: 50Hz base step, can accelerate
+        // Normal: 50Hz per click, can accelerate
         synth.filterCutoff += increment * 50;
     }
     
@@ -94,8 +95,8 @@ void onFilterChange(EEncoder& enc) {
 
 // Volume encoder callback (no acceleration needed for 0-100 range)
 void onVolumeChange(EEncoder& enc) {
-    // Simple increment - no acceleration for volume
-    synth.volume += (enc.getIncrement() > 0) ? 1 : -1;
+    // Simple increment - always ±1 per physical click
+    synth.volume += enc.getIncrement();
     
     // Constrain to 0-100
     synth.volume = constrain(synth.volume, 0, 100);

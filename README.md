@@ -4,11 +4,14 @@ A clean and simple rotary encoder library optimized for RP2040-based boards, per
 
 ## Features
 
+- **Hardware normalization** - Automatically handles encoder hardware differences (1, 2, or 4 counts per detent)
+- **Robust state machine** - Reliable detent detection at all speeds without drift or missed counts
 - **Callback-based event handling** - Keeps your main sketch clean and maintainable
-- **Built-in debouncing** - Reliable operation without false triggers
-- **Single count per detent** - Ideal for UI controls
+- **No encoder debouncing** - Uses proper quadrature decoding for noise immunity
+- **Normalized output** - Always outputs ±1 per physical detent, regardless of hardware
 - **Long press detection** - Separate callback for extended button presses
 - **Acceleration support** - Automatically speeds up when turning quickly
+- **Idle resynchronization** - Prevents drift from missed state transitions
 - **Simple API** - Easy to set up and use
 - **Multiple encoder support** - Use as many encoders as you have pins for
 - **Minimal dependencies** - Just Arduino core, no external libraries needed
@@ -33,12 +36,14 @@ A clean and simple rotary encoder library optimized for RP2040-based boards, per
 #include <EEncoder.h>
 
 // Create encoder with button on pins 2, 3, and 4
-EEncoder encoder(2, 3, 4);
+// The last parameter (4) is the number of counts your encoder produces per detent
+EEncoder encoder(2, 3, 4, 4);  // Typical encoder with 4 counts per detent
 
 // Encoder rotation callback
 void onEncoderTurn(EEncoder& enc) {
-    int8_t increment = enc.getIncrement(); // Returns -1, 1, or more with acceleration
-    Serial.println(increment > 0 ? "Clockwise" : "Counter-clockwise");
+    int8_t increment = enc.getIncrement(); // Always ±1 per click (normalized)
+    // With acceleration enabled, can be ±5 per click when turning fast
+    myValue += increment * 10;  // Scale as needed in your code
 }
 
 // Button press callback
@@ -75,11 +80,18 @@ void loop() {
 
 ```cpp
 // Encoder with button
-EEncoder(uint8_t pinA, uint8_t pinB, uint8_t buttonPin);
+EEncoder(uint8_t pinA, uint8_t pinB, uint8_t buttonPin, uint8_t countsPerDetent = 4);
 
 // Encoder without button
-EEncoder(uint8_t pinA, uint8_t pinB);
+EEncoder(uint8_t pinA, uint8_t pinB, uint8_t countsPerDetent = 4);
 ```
+
+The `countsPerDetent` parameter tells the library how many state changes your encoder hardware produces per physical detent (click). Common values:
+- **1**: Some encoders produce 1 count per detent
+- **2**: Some encoders produce 2 counts per detent
+- **4**: Most common encoders produce 4 counts per detent (default)
+
+The library normalizes the output so you always get ±1 increment per physical detent, regardless of hardware.
 
 ### Methods
 
@@ -96,12 +108,13 @@ Sets the function to be called when the button is pressed. The callback receives
 Sets the function to be called when the button is held down for the long press duration. The callback receives a reference to the EEncoder object.
 
 #### `int8_t getIncrement()`
-Returns the direction and magnitude of the last encoder movement:
-- Without acceleration: returns -1 or 1
-- With acceleration: returns -(rate) or +(rate) when turning quickly
+Returns the normalized increment value:
+- **Normal rotation**: Always returns -1 or 1 per physical detent
+- **With acceleration**: Returns -(rate) or +(rate) when turning quickly
+- Hardware differences are automatically normalized
 
 #### `void setDebounceInterval(uint16_t intervalMs)`
-Sets the debounce time in milliseconds. Default is 10ms.
+Sets the debounce time in milliseconds for the button only. Default is 10ms. The encoder uses quadrature decoding and doesn't need debouncing.
 
 #### `void setLongPressDuration(uint16_t durationMs)`
 Sets how long the button must be held to trigger a long press. Default is 500ms.
@@ -117,6 +130,25 @@ Enables or disables the encoder. When disabled, no callbacks will be fired.
 
 #### `bool isEnabled()`
 Returns true if the encoder is enabled.
+
+## Hardware Normalization
+
+Different encoder hardware produces different numbers of state transitions per physical detent (click). EEncoder automatically normalizes these differences:
+
+```cpp
+// Encoder that produces 4 counts per click (most common)
+EEncoder encoder1(2, 3, 4, 4);
+
+// Encoder that produces 2 counts per click
+EEncoder encoder2(5, 6, 7, 2);
+
+// Encoder that produces 1 count per click
+EEncoder encoder3(8, 9, 10, 1);
+
+// All three encoders will output ±1 per physical click!
+```
+
+This means your application code stays clean and doesn't need to worry about hardware differences. Whether you're using cheap encoders or premium ones, menu navigation and parameter adjustment will feel consistent.
 
 ## Acceleration Feature
 
@@ -179,6 +211,8 @@ The library includes several example sketches:
 2. **EEncoder_Multiple** - Multiple encoders for synthesizer-style control with different acceleration settings
 3. **EEncoder_SynthParameter** - Real-world oscillator frequency control with musical note detection
 4. **EEncoder_Menu** - Menu navigation with wraparound, demonstrating position tracking in application code
+5. **EEncoder_HardwareTest** - Test sketch to determine your encoder's counts per detent
+6. **EEncoder_DetentTest** - Verify reliable detent detection with the improved state machine
 
 ## Tips for Best Results
 
@@ -190,10 +224,42 @@ The library includes several example sketches:
 6. Use acceleration for parameters with wide ranges
 7. Consider implementing fine-tune mode with long press for precise adjustments
 
+### Determining Your Encoder's Counts Per Detent
+
+If you're unsure how many counts your encoder produces per detent, run the **EEncoder_HardwareTest** example:
+1. Upload the sketch to your board
+2. Open Serial Monitor at 115200 baud
+3. Rotate the encoder one physical click
+4. Note the reported counts per detent
+5. Use this value when creating your encoder instances
+
+Most encoders produce 4 counts per detent, which is why it's the default value.
+
+### Testing Reliability
+
+To verify the improved detent detection is working correctly with your encoder, run the **EEncoder_DetentTest** example:
+1. Rotate exactly 10 clicks clockwise - display should show 10
+2. Rotate exactly 10 clicks counter-clockwise - display should show 0
+3. Try different rotation speeds - count should always match physical clicks
+4. Stop mid-rotation and continue - should stay synchronized
+
+If counts don't match physical clicks, adjust the `countsPerDetent` parameter.
+
+## Technical Details
+
+### Robust State Machine
+The library uses an improved state machine that tracks your position within the encoder's quadrature sequence. This approach:
+- Accurately detects complete detents even during fast rotation
+- Automatically resynchronizes after idle periods (50ms) to prevent drift
+- Handles missed state transitions gracefully
+- Works reliably at all rotation speeds
+
+Unlike simple accumulator approaches, this state machine stays synchronized with the physical detents, ensuring consistent and predictable behavior for menu navigation and parameter adjustment.
+
 ## Memory Usage
 
 The library is optimized for minimal memory usage:
-- ~28 bytes RAM per encoder instance
+- ~30 bytes RAM per encoder instance
 - ~2KB flash for the library code
 
 ## Acknowledgments
@@ -209,7 +275,7 @@ While EEncoder shares no code with these libraries, they influenced the design p
 - Synthesizer-specific features (acceleration, long-press)
 - Zero dependencies
 
-Development was assisted by Claude (Anthropic) in collaboration with Brian Varren.
+Development was assisted by Claude (Anthropic) in collaboration with the author.
 
 ## Contributing
 

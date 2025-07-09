@@ -1,5 +1,6 @@
 #######################################
 # Syntax Coloring Map for EEncoder
+# Version 1.2.0 - Robust State Machine
 #######################################
 
 #######################################
@@ -32,5 +33,7 @@ isEnabled	KEYWORD2
 
 DEFAULT_DEBOUNCE_MS	LITERAL1
 DEFAULT_LONG_PRESS_MS	LITERAL1
+ENCODER_IDLE_TIMEOUT_MS	LITERAL1
 ACCELERATION_THRESHOLD_MS	LITERAL1
 DEFAULT_ACCELERATION_RATE	LITERAL1
+DEFAULT_COUNTS_PER_DETENT	LITERAL1
