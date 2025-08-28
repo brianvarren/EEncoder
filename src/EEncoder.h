@@ -2,15 +2,16 @@
   EEncoder - A clean rotary encoder library for RP2040
   Optimized for digital synthesizer UI controls
   
-  v1.2.0 Features:
-  - Robust state machine (no missed/false detents)
+  v1.3.0 Features:
+  - Improved sensitivity - no missed detents
+  - Robust state machine with absolute position tracking
   - Hardware normalization (handles 1, 2, or 4 counts per detent)
   - Callback-based event handling
   - No encoder debouncing (uses quadrature decoding)
   - Normalized output (always ±1 per physical detent)
   - Long press detection
   - Acceleration support
-  - Idle resynchronization
+  - Intelligent idle recalibration
   - Simple, clean API
 */
 
@@ -19,13 +20,13 @@
 
 #include <Arduino.h>
 
-// Default debounce time in milliseconds for button (same as Bounce2)
+// Default debounce time in milliseconds for button
 #define DEFAULT_DEBOUNCE_MS 10
 
 // Default long press duration in milliseconds
 #define DEFAULT_LONG_PRESS_MS 500
 
-// Idle timeout for position reset - prevents drift from missed counts
+// Idle timeout for position recalibration
 #define ENCODER_IDLE_TIMEOUT_MS 100
 
 // Default counts per detent - most common encoders produce 4 counts per physical click
@@ -65,6 +66,9 @@ public:
     // With acceleration enabled, returns ±accelerationRate when turning fast
     int8_t getIncrement() const { return _increment; }
     
+    // Get button state (true if pressed)
+    bool getButton() const;
+    
     // Configuration methods
     void setDebounceInterval(uint16_t intervalMs);  // Button only - encoder doesn't need debouncing
     void setLongPressDuration(uint16_t durationMs);
@@ -87,9 +91,12 @@ private:
     uint8_t _encoderState;
     int8_t _increment;
     
-    // State machine for robust detent detection
-    int8_t _position;                // Current position in the state sequence
-    uint32_t _lastStateChangeTime;   // For idle reset
+    // Improved position tracking
+    int32_t _absolutePosition;       // Total accumulated position
+    int32_t _lastCallbackPosition;   // Position at last callback
+    uint8_t _lastValidState;         // Last known good detent state
+    uint8_t _stateSequence;          // For tracking state machine
+    uint32_t _lastStateChangeTime;   // For idle detection
     uint8_t _countsPerDetent;        // Hardware counts per physical detent
     
     // State tracking for button

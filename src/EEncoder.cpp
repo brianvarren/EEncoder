@@ -2,7 +2,7 @@
   EEncoder - A clean rotary encoder library for RP2040
   Implementation file
   
-  v1.2.0 - Robust state machine for reliable detent detection
+  v1.3.0 - Improved sensitivity and no missed detents
 */
 
 #include "EEncoder.h"
@@ -16,7 +16,10 @@ EEncoder::EEncoder(uint8_t pinA, uint8_t pinB, uint8_t buttonPin, uint8_t counts
     _lastEncoderState(0),
     _encoderState(0),
     _increment(0),
-    _position(0),
+    _absolutePosition(0),
+    _lastCallbackPosition(0),
+    _lastValidState(0),
+    _stateSequence(0),
     _lastStateChangeTime(0),
     _countsPerDetent(countsPerDetent),
     _buttonState(HIGH),
@@ -34,13 +37,14 @@ EEncoder::EEncoder(uint8_t pinA, uint8_t pinB, uint8_t buttonPin, uint8_t counts
     _longPressCallback(nullptr),
     _enabled(true)
 {
-    // Configure pins with INPUT_PULLUP (though external pullups are expected)
+    // Configure pins with INPUT_PULLUP
     pinMode(_pinA, INPUT_PULLUP);
     pinMode(_pinB, INPUT_PULLUP);
     pinMode(_buttonPin, INPUT_PULLUP);
     
     // Read initial encoder state
     _lastEncoderState = getEncoderState();
+    _lastValidState = _lastEncoderState;
     _lastStateChangeTime = millis();
 }
 
@@ -53,7 +57,10 @@ EEncoder::EEncoder(uint8_t pinA, uint8_t pinB, uint8_t countsPerDetent) :
     _lastEncoderState(0),
     _encoderState(0),
     _increment(0),
-    _position(0),
+    _absolutePosition(0),
+    _lastCallbackPosition(0),
+    _lastValidState(0),
+    _stateSequence(0),
     _lastStateChangeTime(0),
     _countsPerDetent(countsPerDetent),
     _buttonState(HIGH),
@@ -77,6 +84,7 @@ EEncoder::EEncoder(uint8_t pinA, uint8_t pinB, uint8_t countsPerDetent) :
     
     // Read initial encoder state
     _lastEncoderState = getEncoderState();
+    _lastValidState = _lastEncoderState;
     _lastStateChangeTime = millis();
 }
 
@@ -107,44 +115,60 @@ void EEncoder::readEncoder() {
         // Create a 4-bit value from old and new states
         uint8_t combined = (_lastEncoderState << 2) | _encoderState;
         
-        // Determine direction based on state transition
-        int8_t direction = 0;
+        // State transition table for quadrature decoding
+        // This table is more forgiving and catches all valid transitions
+        static const int8_t transitionTable[16] = {
+             0,  // 0000: no change
+             1,  // 0001: CW
+            -1,  // 0010: CCW
+             0,  // 0011: invalid (skip)
+            -1,  // 0100: CCW
+             0,  // 0101: no change
+             0,  // 0110: invalid (skip)
+             1,  // 0111: CW
+             1,  // 1000: CW
+             0,  // 1001: invalid (skip)
+             0,  // 1010: no change
+            -1,  // 1011: CCW
+             0,  // 1100: invalid (skip)
+            -1,  // 1101: CCW
+             1,  // 1110: CW
+             0   // 1111: no change
+        };
         
-        // Valid CW transitions
-        if (combined == 0b0001 || combined == 0b0111 || 
-            combined == 0b1110 || combined == 0b1000) {
-            direction = 1;
-        }
-        // Valid CCW transitions  
-        else if (combined == 0b0010 || combined == 0b1011 || 
-                 combined == 0b1101 || combined == 0b0100) {
-            direction = -1;
-        }
+        int8_t direction = transitionTable[combined];
         
-        // Update position if valid transition
+        // Update position for any valid transition
         if (direction != 0) {
-            _position += direction;
+            _absolutePosition += direction;
             _lastStateChangeTime = currentTime;
             
-            // Check if we've completed a detent
-            if (abs(_position) >= _countsPerDetent) {
-                // We've moved one full detent
-                _increment = (_position > 0) ? 1 : -1;
+            // Calculate how many detents we've moved since last callback
+            int32_t positionDelta = _absolutePosition - _lastCallbackPosition;
+            
+            // Check if we've moved enough for a complete detent
+            if (abs(positionDelta) >= _countsPerDetent) {
+                // Calculate how many full detents we've moved
+                int8_t detents = positionDelta / _countsPerDetent;
                 
-                // Reset position for next detent
-                _position = 0;
+                // Update the last callback position by the number of full detents
+                // This preserves any fractional detent for next time
+                _lastCallbackPosition += detents * _countsPerDetent;
+                
+                // Set increment for this callback
+                _increment = detents;
                 
                 // Apply acceleration if enabled
-                if (_accelerationEnabled) {
+                if (_accelerationEnabled && abs(detents) == 1) {
                     uint32_t timeSinceLastRotation = currentTime - _lastRotationTime;
                     
                     // If rotating quickly, multiply increment
                     if (timeSinceLastRotation < ACCELERATION_THRESHOLD_MS) {
                         _increment *= _accelerationRate;
                     }
-                    
-                    _lastRotationTime = currentTime;
                 }
+                
+                _lastRotationTime = currentTime;
                 
                 // Fire callback
                 if (_encoderCallback != nullptr) {
@@ -153,16 +177,30 @@ void EEncoder::readEncoder() {
             }
         }
         
+        // Track valid states for idle detection
+        if (_encoderState == 0b00 || _encoderState == 0b11) {
+            _lastValidState = _encoderState;
+        }
+        
         _lastEncoderState = _encoderState;
     }
-    // Check for idle timeout to resynchronize
-    else if (_position != 0) {
+    // Handle idle recalibration
+    else {
         uint32_t currentTime = millis();
         
-        // If encoder has been idle, reset position
-        // This prevents drift from missed counts
+        // If encoder has been idle at a detent position, recalibrate
         if ((currentTime - _lastStateChangeTime) > ENCODER_IDLE_TIMEOUT_MS) {
-            _position = 0;
+            // Only recalibrate if we're at a natural detent position
+            if (_encoderState == 0b00 || _encoderState == 0b11) {
+                // Round position to nearest detent
+                int32_t nearestDetent = ((_absolutePosition + _countsPerDetent/2) / _countsPerDetent) * _countsPerDetent;
+                
+                // Only adjust if we're close to a detent (within 1 count)
+                if (abs(_absolutePosition - nearestDetent) <= 1) {
+                    _absolutePosition = nearestDetent;
+                    _lastCallbackPosition = nearestDetent;
+                }
+            }
         }
     }
 }
@@ -211,6 +249,11 @@ void EEncoder::readButton() {
     _lastButtonState = currentState;
 }
 
+// Get button state
+bool EEncoder::getButton() const {
+    return _hasButton && (_buttonState == LOW);
+}
+
 // Set encoder rotation callback
 void EEncoder::setEncoderHandler(EncoderCallback callback) {
     _encoderCallback = callback;
@@ -253,6 +296,6 @@ void EEncoder::enable(bool enabled) {
     // Reset state when disabled
     if (!_enabled) {
         _increment = 0;
-        _position = 0;
+        // Don't reset absolute position - preserve it
     }
 }
